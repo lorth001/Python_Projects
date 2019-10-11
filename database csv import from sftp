@@ -1,0 +1,134 @@
+import pysftp
+import csv
+import ast
+import cx_Oracle
+import keyring
+import os
+import io
+import codecs
+import shutil
+import glob
+from itertools import islice
+from datetime import datetime, timedelta
+
+
+def insert(localfile, connection, delimiter=None):
+    print('\nSyncing contents of the new CSV file to the Oracle database...')
+    with codecs.open(localfile, 'r', encoding='cp1252', errors='ignore') as csvfile:
+        if (delimiter is None):
+            reader = csv.reader(csvfile)
+        else:
+            reader = csv.reader(csvfile, delimiter=delimiter)
+        connection.execute(
+            "DELETE FROM ['''TABLE_NAME'''] WHERE active is null")
+        connection.execute('commit')
+        counter = 0
+        for row in reader:
+            if counter >= 6:
+                connection.execute("INSERT INTO ['''TABLE_NAME'''] (CAMPAIGN_NAME,PACKAGE_NAME,PLACEMENT_ID,PLACEMENT_NAME,AD_TYPE,AD_NAME,STATE,DAY_,TOTAL_NET_SPEND,IMPRESSIONS,TOTAL_AD_CLICKS,FREE_CFAW_REGISTRATION_TL,FREE_CFAW_REGISTRATION_CT,FREE_CFAW_REGISTRATION_VT,BASKETBALL_CONV_REVENUE_TL,BASKETBALL_CONV_REVENUE_CT,BASKETBALL_CONV_REVENUE_VT,ONLINE_APPLICATION_TL,ONLINE_APPLICATION_CT,ONLINE_APPLICATION_VT,CONVERSION_TL,CONVERSION_CT,CONVERSION_VT,CFAW_REGISTRATION_TL,CFAW_REGISTRATION_CT,CFAW_REGISTRATION_VT,RESIDENT_INQUIRY_TL,RESIDENT_INQUIRY_CT,RESIDENT_INQUIRY_VT,file_name) values (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21, :22, :23, :24, :25, :26, :27, :28, :29,:30)", [
+                    row[0], row[1], row[2], row[3], row[4], row[5], row[6], datetime.strptime(row[7], '%Y-%m-%d'), row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15], row[16], row[17], row[18], row[19], row[20], row[21], row[22], row[23], row[24], row[25], row[26], row[27], row[28], localfile])
+                if counter == 100:
+                    c.execute('commit')
+            counter = counter + 1
+            c.execute('commit')
+
+
+def update_records(connection):
+    print('\n\nUpdating \'active\' status in the database records...')
+    connection.execute(
+        "UPDATE ['''TABLE_NAME'''] SET active = 'N' WHERE active = 'Y'")
+    connection.execute('commit')
+    connection.execute(
+        "UPDATE ['''TABLE_NAME'''] SET active = 'Y' WHERE active IS NULL")
+    connection.execute('commit')
+    connection.execute(
+        "DELETE FROM ['''TABLE_NAME'''] WHERE active = 'N' and imported_date<sysdate-4")
+    connection.execute('commit')
+
+
+def process_files(directory_structure, local_folder):
+    # REMOVE OLD EXCEL FILE FROM LOCAL DIR
+    print('\nRemoving the old CSV file from the local directory...')
+    file_to_remove = local_folder+'*'
+    r = glob.glob(file_to_remove)
+    for i in r:
+        shutil.rmtree(i)
+
+    # GET LATEST FILE FROM SFTP SERVER
+    file_list = []  # initialize empty array to hold the last modified times for files in SFTP
+    for attr in directory_structure:
+        # add modified times for each file in SFTP to file_list array
+        file_list.append(attr.st_mtime)
+    # sort last modified times
+    file_list.sort(reverse=True)
+    # grab latest modified time
+    latest_time = file_list[0]
+
+    for attr in directory_structure:
+        # grab file that matches latest modified time
+        if latest_time == attr.st_mtime:
+            target_file = attr.filename
+            print('\nRetrieving:')
+            print(target_file)
+            localfile = local_folder+target_file
+            sftp.get(target_file, localfile)
+    return localfile
+
+
+def remove_files(directory_structure):
+    print('\nRemoving files that are at least 5 days old from the SFTP server...')
+    for attr in directory_structure:
+        file_date = datetime.fromtimestamp(attr.st_mtime).date()
+        cutoff_date = datetime.today().date() - timedelta(days=5)
+        if file_date < cutoff_date:
+            sftp.remove(attr.filename)
+
+def last_processed(connection, localfile):
+    print('\nChecking to see if the CSV file has already been inserted into the database...')
+    file_name = connection.execute("SELECT file_name FROM ['''TABLE_NAME'''] WHERE trunc(imported_date) = trunc(sysdate) AND active = 'Y' AND rownum = 1")
+    if file_name == localfile:
+        print('\nFile contents have already been inserted into the database.  Exiting script...')
+        sys.exit(0)
+
+
+
+
+user = ['''USER_NAME''']                            # username for Windows credential
+cred_name = ['''CRED_NAME''']               # Windows credential name
+pwd = keyring.get_password(cred_name, user)  # get Windows credential password
+myHostname = ['''www.example_host_name.com''']            # host to connect to
+cnopts = pysftp.CnOpts(knownhosts=None)     # bypass 'hostkeys' error
+cnopts.hostkeys = None                      # bypass 'hostkeys' error
+local_folder = ['''PATH/TO/LOCAL/FOLDER/''']
+
+with pysftp.Connection(host=myHostname, username=user, password=pwd, cnopts=cnopts) as sftp:
+    sftp.cwd('./uploads/')                      # shows current dir
+    directory_structure = sftp.listdir_attr()   # shows directory of SFTP
+    print("\nConnection successful... ")         # connection message
+
+    # process_files
+    localfile = process_files(directory_structure, local_folder)
+
+    # Creating connetion to DB (opening the session)
+    user = os.environ.get("USERNAME")
+    cred_name = ['''CRED_NAME''']
+    pwd = keyring.get_password(cred_name, user)
+    conn_str = user+'/'+pwd+u'@['''DATABASE_NAME''']'
+    conn = cx_Oracle.connect(conn_str)
+    c = conn.cursor()
+
+    # REMOVE OLD FILES IN SFTP SERVER
+    remove_files(directory_structure)
+
+    # DETERMINE IF FILE HAS ALREADY BEEN INSERTED INTO DATABASE
+    last_processed(c, localfile)
+
+    # UPLOAD FILE CONTENTS TO ORACLE DATABASE
+    insert(localfile, c)
+
+    # UPDATE 'ACTIVE' STATUS IN DATABASE RECORDS
+    update_records(c)
+
+    conn.close()
+
+    print('\n********************\nPROCESS COMPLETE\n********************\n')
