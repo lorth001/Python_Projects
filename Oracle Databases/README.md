@@ -1,1 +1,1 @@
-The "script.py" file in this folder is a Python script used for getting a .csv file from a remote SFTP server and inserting the records from the .csv file into an Oracle database
+Script for getting a .csv file from a remote SFTP server and ETL-ing the data to an Oracle database
