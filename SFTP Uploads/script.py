@@ -17,7 +17,7 @@ cnopts.hostkeys = None                                      # bypass 'hostkeys' 
 
 
 def process_files(directory_structure):
-    files_in_folder = glob.glob("Y:\\FOLDER_NAME\\*")       # get LiveRamp files from local folder
+    files_in_folder = glob.glob("Y:\\FOLDER_NAME\\*")       # get files to upload from local folder
     archive_folder = "Y:\\FOLDER_NAME\\SUB_FOLDER_NAME\\"   # get archive folder
     if len(files_in_folder) == 0:                           # if folder contains no files, then pass
         pass
